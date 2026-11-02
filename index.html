@@ -124,6 +124,7 @@
     50%{box-shadow:0 10px 44px rgba(201,162,39,.34), inset 0 0 0 3px rgba(255,255,255,.8)}
   }
   .start:active{transform:scale(.97);}
+  .start-note{margin:14px 0 0;font-size:11px;letter-spacing:.12em;color:var(--ink-soft);opacity:.75;}
   /* ---------- 内容块 ---------- */
   main{position:relative;z-index:3;padding-bottom:40px;}
   .block{
@@ -373,6 +374,7 @@
     </h1>
     <p class="sub">四十年，你把日子过成了温柔的样子</p>
     <button class="start" id="startBtn">轻触，开启祝福</button>
+    <p class="start-note">开启后会响起生日歌</p>
   </div>
 </section>
 
@@ -654,7 +656,9 @@ const MELODY = [
 ];
 const BEAT = 0.42;
 
-function ensureAudio(){
+let audioUnlocked = false;
+
+async function ensureAudio(){
   if (!actx){
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
@@ -663,7 +667,23 @@ function ensureAudio(){
     masterGain.gain.value = 0.0001;
     masterGain.connect(actx.destination);
   }
-  if (actx.state === 'suspended') actx.resume();
+  if (actx.state === 'suspended'){
+    try { actx.resume(); } catch (e) {}
+  }
+  /* iOS/微信需要在用户手势里播一个静音 buffer 才算真正解锁音频 */
+  if (!audioUnlocked){
+    try {
+      const buf = actx.createBuffer(1, 1, 22050);
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      src.connect(actx.destination);
+      src.start(0);
+      audioUnlocked = true;
+    } catch (e) {}
+  }
+  if (actx.state === 'suspended'){
+    try { await actx.resume(); } catch (e) {}
+  }
   return actx;
 }
 
@@ -695,9 +715,14 @@ function playTone(freq, when, dur, level = 0.16, type = 'triangle'){
   osc.stop(when + dur + 0.6);
 }
 
-function startMusic(){
+async function startMusic(){
   if (musicOn) return;
-  if (!ensureAudio()) return;
+  const ctx = await ensureAudio();
+  if (!ctx){ toast('这台设备暂不支持网页音乐'); return; }
+  if (ctx.state !== 'running'){
+    toast('请再点一下屏幕，开启音乐');
+    return;
+  }
   musicOn = true;
   masterGain.gain.cancelScheduledValues(actx.currentTime);
   masterGain.gain.setValueAtTime(0.0001, actx.currentTime);
